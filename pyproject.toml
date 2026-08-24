@@ -30,7 +30,14 @@ Issues = "https://github.com/llmns/llmns/issues"
 [tool.maturin]
 python-source = "python"
 module-name = "llmns._llmns"
+manifest-path = "crates/llmns-py/Cargo.toml"
 features = ["pyo3/extension-module"]
+# The declared License-Files live at the workspace root, outside the
+# manifest dir — include them explicitly or PyPI rejects the sdist (PEP 639).
+include = [
+    { path = "LICENSE-MIT", format = "sdist" },
+    { path = "LICENSE-APACHE", format = "sdist" },
+]
 
 [dependency-groups]
 dev = ["maturin>=1.7", "pytest>=8"]

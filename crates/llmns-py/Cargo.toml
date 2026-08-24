@@ -1,0 +1,17 @@
+[package]
+name = "llmns-py"
+description = "Python bindings for llmns (extension module llmns._llmns)"
+# Distributed as wheels on PyPI via maturin, never as a crate.
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "_llmns"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+llmns = { path = "../llmns" }
+pyo3 = { version = "0.25", features = ["abi3-py312"] }

@@ -1,0 +1,12 @@
+[package]
+name = "llmns"
+description = "Parse, normalize, and compare llm:// references (a name system for language models)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://llmns.info"
+documentation = "https://docs.rs/llmns"
+readme = "README.md"
+keywords = ["llm", "uri", "parser", "model", "reference"]
+categories = ["parser-implementations"]

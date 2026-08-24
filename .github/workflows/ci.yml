@@ -24,8 +24,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
 
   pytest:
     name: pytest (${{ matrix.runner }})
@@ -55,12 +55,44 @@ jobs:
       pull-requests: write
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
+      prs_created: ${{ steps.rp.outputs.prs_created }}
+      pr: ${{ steps.rp.outputs.pr }}
     steps:
       - uses: googleapis/release-please-action@v5
         id: rp
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # The generic x-release-please-version updater bumps Cargo.toml, but nothing
+  # rewrites Cargo.lock, which pins every workspace member at the previous
+  # version. Refresh the lock on the release PR branch so the tagged release
+  # commit builds under --locked.
+  sync-lockfile:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      - name: Sync Cargo.lock with the bumped workspace version
+        run: cargo update --workspace
+      - name: Commit refreshed Cargo.lock to the release PR
+        env:
+          BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already in sync"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: sync Cargo.lock with release version"
+          git push origin "HEAD:${BRANCH}"
 
   # The PyPI publish chains off release-please because tags created by its
   # GITHUB_TOKEN do not trigger `on: push: tags` workflows.
@@ -159,3 +191,20 @@ jobs:
           # Manual re-dispatch after a partial publish must not choke on
           # the wheels that already made it to PyPI.
           skip-existing: true
+
+  # crates.io publish chains off the release the same way PyPI does. Auth is
+  # the CARGO_REGISTRY_TOKEN repo secret. `--workspace` publishes the members
+  # in dependency order and skips the `publish = false` ones (llmns-py).
+  publish-crates:
+    needs: release-please
+    if: ${{ !cancelled() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
