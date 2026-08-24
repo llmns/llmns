@@ -1,7 +1,7 @@
 # llmns
 
 Parse, normalize, and compare `llm://` references, per
-[draft-tahrioui-llmns-01](https://llmns.info/rfc.html).
+[llmns draft v01](https://llmns.info/rfc.html).
 
 ```
 llm[s][+transport]://[credential@]host[:port]/model[@pin][?hints]

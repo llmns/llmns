@@ -1,4 +1,4 @@
-//! Parse, normalize, and compare llm:// references (draft-tahrioui-llmns-01).
+//! Parse, normalize, and compare llm:// references (llmns draft v01).
 //!
 //! ```
 //! let reference: llmns::Reference =

@@ -1,4 +1,4 @@
-//! Python bindings for llmns (draft-tahrioui-llmns-01).
+//! Python bindings for llmns (llmns draft v01).
 
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
