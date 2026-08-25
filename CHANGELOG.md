@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/llmns/llmns/compare/v0.2.0...v0.3.0) (2026-08-25)
+
+
+### Features
+
+* align with llmns draft v02 ([c46ccf9](https://github.com/llmns/llmns/commit/c46ccf951256efd6940e974a862c3c9cbbac373f))
+
 ## [0.2.0](https://github.com/llmns/llmns/compare/v0.1.0...v0.2.0) (2026-08-24)
 
 
