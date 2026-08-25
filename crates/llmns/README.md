@@ -1,7 +1,7 @@
 # llmns
 
 Parse, normalize, and compare `llm://` references, per
-[llmns draft v01](https://llmns.info/rfc.html).
+[llmns draft v02](https://llmns.info/rfc.html).
 
 ```
 llm[s][+transport]://[credential@]host[:port]/model[@pin][?hints]
@@ -13,10 +13,11 @@ let reference: llmns::Reference =
 assert_eq!(reference.host, "triton.internal");
 assert_eq!(reference.pin.as_ref().unwrap().kind, llmns::PinKind::Name);
 
-// Identity is the specification's rule: the normalized (host, model, pin)
-// triple. Credential, hints, transport, and TLS do not contribute.
+// Equivalence is the specification's rule: the normalized
+// (host, port, model, pin) tuple, with RFC 3986 percent-encoding
+// normalization. Credential, hints, transport, and TLS do not contribute.
 let other: llmns::Reference = "llm://TRITON.internal:8001/qwen3-ft@name:step-2000".parse()?;
-assert!(reference.denotes_same_model(&other));
+assert!(reference.is_equivalent(&other));
 # Ok::<(), llmns::ParseError>(())
 ```
 

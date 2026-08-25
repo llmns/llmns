@@ -12,7 +12,7 @@ def test_spec_examples_round_trip() -> None:
         "llms://work@api.openai.com/gpt-5",
         "llms://huggingface.co/meta-llama/Llama-3.1-8B@hash:6f6073b",
         "llm://localhost:11434/llama3.2:3b?api=openai",
-        "llms+grpc://triton.internal:8001/qwen3-ft@name:step-2000",
+        "llms+grpc://triton.internal:8001/qwen3-ft@name:step-2000?api=openai",
     ]
     for example in examples:
         assert str(llmns.parse(example)) == example
@@ -38,14 +38,21 @@ def test_transport_defaults_to_http() -> None:
     assert ref.hints == {}
 
 
-def test_identity_ignores_credential_hints_transport_and_tls() -> None:
+def test_equivalence_ignores_credential_hints_transport_and_tls() -> None:
     a = llmns.parse("llms://work@API.openai.com/gpt-5?api=openai")
     b = llmns.parse("llm+grpc://api.openai.com/gpt-5")
     assert a == b
     assert hash(a) == hash(b)
 
 
-def test_identity_uses_host_port_model_and_pin() -> None:
+def test_equivalence_normalizes_percent_encodings() -> None:
+    a = llmns.parse("llms://api%2Eopenai.com/gpt%2D5@hash:a%3fb")
+    b = llmns.parse("llms://api.openai.com/gpt-5@hash:a%3Fb")
+    assert a == b
+    assert hash(a) == hash(b)
+
+
+def test_equivalence_uses_host_port_model_and_pin() -> None:
     base = llmns.parse("llm://localhost:8000/m")
     assert base != llmns.parse("llm://localhost:8001/m")
     assert base != llmns.parse("llm://localhost:8000/n")
@@ -58,9 +65,19 @@ def test_references_key_dicts_by_model_identity() -> None:
     assert served[llmns.parse("llm://API.OPENAI.COM/gpt-5")] == "primary"
 
 
-def test_normalized_lowercases_the_host_only() -> None:
+def test_normalized_lowercases_the_host_and_keeps_model_case() -> None:
     ref = llmns.parse("llms://API.OpenAI.com/GPT-5")
     assert str(ref.normalized()) == "llms://api.openai.com/GPT-5"
+
+
+def test_normalized_applies_percent_encoding_normalization() -> None:
+    ref = llmns.parse("llm://H%2Eh/m%2d@hash:a%3fb?x=1")
+    assert str(ref.normalized()) == "llm://h.h/m-@hash:a%3Fb?x=1"
+
+
+def test_the_first_occurrence_of_a_hint_key_applies() -> None:
+    ref = llmns.parse("llm://h/m?api=openai&api=anthropic&flag")
+    assert ref.hints == {"api": "openai", "flag": ""}
 
 
 def test_constructor_builds_the_same_reference() -> None:
@@ -88,6 +105,8 @@ def test_constructor_builds_the_same_reference() -> None:
         "llm://h/",
         "llm://h/m@tag:x",
         "llm://h/m@name:",
+        "llm://h/m@name:x@y",
+        "llm://h/m@NAME:x",
         "llm://a@b@h/m",
         "llm://secret:hunter2@h/m",
         "llm://h:99999/m",

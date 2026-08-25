@@ -1,7 +1,7 @@
 # llmns
 
 Parse, normalize, and compare `llm://` references, per
-[llmns draft v01](https://llmns.info/rfc.html).
+[llmns draft v02](https://llmns.info/rfc.html).
 
 A reference identifies a language model by serving host, transport,
 model state, and credential name:
@@ -31,10 +31,10 @@ ref.model       # "qwen3-ft"
 ref.pin         # Pin(kind="name", value="step-2000")
 ref.hints       # {"api": "openai"}
 
-# Equality is the specification's identity rule: the normalized
-# (host, model, pin) triple. Credential, hints, transport, and TLS
-# do not contribute.
-llmns.parse("llms://work@API.openai.com/gpt-5") == llmns.parse("llm://api.openai.com/gpt-5")  # True
+# Equality is the specification's equivalence rule: the normalized
+# (host, port, model, pin) tuple, with RFC 3986 percent-encoding
+# normalization. Credential, hints, transport, and TLS do not contribute.
+llmns.parse("llms://work@API.openai.com/gpt-5") == llmns.parse("llm://api%2Eopenai.com/gpt-5")  # True
 ```
 
 The core is Rust; the wheel is built with [maturin](https://maturin.rs).

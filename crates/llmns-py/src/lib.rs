@@ -1,4 +1,4 @@
-//! Python bindings for llmns (llmns draft v01).
+//! Python bindings for llmns (llmns draft v02).
 
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
@@ -67,10 +67,10 @@ impl PyPin {
 
 /// One llm:// reference, decomposed.
 ///
-/// Equality and hashing follow the specification's identity rule: two
-/// references denote the same model when their normalized
-/// (host, model, pin) triples are equal. The credential, the hints, the
-/// transport, and TLS do not contribute.
+/// Equality and hashing follow the specification's equivalence rule: two
+/// references are equivalent when their normalized
+/// (host, port, model, pin) tuples are equal. The credential, the hints,
+/// the transport, and TLS do not contribute.
 #[pyclass(frozen, name = "Reference")]
 #[derive(Clone)]
 pub struct PyReference {
@@ -150,16 +150,20 @@ impl PyReference {
         self.inner.pin.clone().map(|inner| PyPin { inner })
     }
 
+    /// The hints as a dict; the first occurrence of a key applies.
     #[getter]
     fn hints<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let hints = PyDict::new(py);
         for (key, value) in self.inner.hints() {
-            hints.set_item(key, value)?;
+            if !hints.contains(key)? {
+                hints.set_item(key, value)?;
+            }
         }
         Ok(hints)
     }
 
-    /// The reference with the host lowercased; everything else is unchanged.
+    /// The reference with the host, model, and pin normalized per the
+    /// equivalence rule; the credential and the hints are unchanged.
     fn normalized(&self) -> PyReference {
         PyReference {
             inner: self.inner.normalized(),
@@ -176,7 +180,7 @@ impl PyReference {
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         match other.extract::<PyReference>() {
-            Ok(o) => self.inner.denotes_same_model(&o.inner),
+            Ok(o) => self.inner.is_equivalent(&o.inner),
             Err(_) => false,
         }
     }

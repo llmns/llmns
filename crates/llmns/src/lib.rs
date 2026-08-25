@@ -1,4 +1,4 @@
-//! Parse, normalize, and compare llm:// references (llmns draft v01).
+//! Parse, normalize, and compare llm:// references (llmns draft v02).
 //!
 //! ```
 //! let reference: llmns::Reference =
@@ -80,6 +80,11 @@ impl Pin {
         if value.is_empty() {
             return Err(ParseError("empty pin value".to_string()));
         }
+        if value.contains(['@', '?']) {
+            return Err(ParseError(format!(
+                "invalid pin value {value:?}; percent-encode a literal \"@\" as %40"
+            )));
+        }
         Ok(Pin { kind, value })
     }
 }
@@ -90,9 +95,9 @@ impl fmt::Display for Pin {
     }
 }
 
-/// The normalized (host, model, pin) triple that decides whether two
-/// references denote the same model. The credential, the hints, the
-/// transport, and TLS do not contribute.
+/// The normalized (host, port, model, pin) tuple that decides whether two
+/// references are equivalent. The credential, the hints, the transport,
+/// and TLS do not contribute.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identity {
     pub host: String,
@@ -128,6 +133,52 @@ fn checked_transport(transport: &str) -> Result<String, ParseError> {
 fn checked_port(port: &str) -> Result<u16, ParseError> {
     port.parse::<u16>()
         .map_err(|_| ParseError(format!("invalid port {port:?}")))
+}
+
+fn is_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn hex_digit(c: char) -> Option<u8> {
+    c.to_digit(16).map(|digit| digit as u8)
+}
+
+/// Percent-encoding normalization per Section 6.2.2 of RFC 3986: uppercase
+/// the hexadecimal digits of percent-encodings and decode percent-encodings
+/// of unreserved characters. `lowercase` additionally lowercases plain
+/// characters, the host rule. Malformed percent sequences pass through.
+fn normalize_component(component: &str, lowercase: bool) -> String {
+    let chars: Vec<char> = component.chars().collect();
+    let mut out = String::with_capacity(component.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '%' && i + 2 < chars.len() {
+            if let (Some(hi), Some(lo)) = (hex_digit(chars[i + 1]), hex_digit(chars[i + 2])) {
+                let byte = hi * 16 + lo;
+                if is_unreserved(byte) {
+                    let decoded = char::from(byte);
+                    out.push(if lowercase {
+                        decoded.to_ascii_lowercase()
+                    } else {
+                        decoded
+                    });
+                } else {
+                    out.push('%');
+                    out.push(chars[i + 1].to_ascii_uppercase());
+                    out.push(chars[i + 2].to_ascii_uppercase());
+                }
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if lowercase {
+            chars[i].to_ascii_lowercase()
+        } else {
+            chars[i]
+        });
+        i += 1;
+    }
+    out
 }
 
 impl Reference {
@@ -180,29 +231,39 @@ impl Reference {
         self.transport.as_deref().unwrap_or("http")
     }
 
-    /// The normalized (host, model, pin) triple.
+    /// The normalized (host, port, model, pin) tuple.
     pub fn identity(&self) -> Identity {
         Identity {
-            host: self.host.to_ascii_lowercase(),
+            host: normalize_component(&self.host, true),
             port: self.port,
-            model: self.model.clone(),
-            pin: self.pin.clone(),
+            model: normalize_component(&self.model, false),
+            pin: self.pin.as_ref().map(|pin| Pin {
+                kind: pin.kind,
+                value: normalize_component(&pin.value, false),
+            }),
         }
     }
 
-    /// Whether both references denote the same model per the identity rule.
-    pub fn denotes_same_model(&self, other: &Reference) -> bool {
+    /// Whether both references are equivalent per the specification: their
+    /// normalized (host, port, model, pin) tuples are equal.
+    pub fn is_equivalent(&self, other: &Reference) -> bool {
         self.identity() == other.identity()
     }
 
-    /// The reference with the host lowercased; everything else is unchanged.
+    /// The reference with the host, model, and pin normalized per the
+    /// equivalence rule; the credential and the hints are unchanged.
     pub fn normalized(&self) -> Reference {
         let mut normalized = self.clone();
-        normalized.host = normalized.host.to_ascii_lowercase();
+        normalized.host = normalize_component(&normalized.host, true);
+        normalized.model = normalize_component(&normalized.model, false);
+        if let Some(pin) = &mut normalized.pin {
+            pin.value = normalize_component(&pin.value, false);
+        }
         normalized
     }
 
-    /// The hints as key/value pairs; a pair without "=" yields an empty value.
+    /// The hints as key/value pairs; a pair without "=" yields an empty
+    /// value. The specification takes the first occurrence of a key.
     pub fn hints(&self) -> impl Iterator<Item = (&str, &str)> {
         self.query
             .as_deref()
@@ -210,6 +271,13 @@ impl Reference {
             .split('&')
             .filter(|pair| !pair.is_empty())
             .map(|pair| pair.split_once('=').unwrap_or((pair, "")))
+    }
+
+    /// The first occurrence of a hint key, per the specification.
+    pub fn hint(&self, key: &str) -> Option<&str> {
+        self.hints()
+            .find(|(hint_key, _)| *hint_key == key)
+            .map(|(_, value)| value)
     }
 }
 
@@ -355,7 +423,7 @@ mod tests {
             "llms://work@api.openai.com/gpt-5",
             "llms://huggingface.co/meta-llama/Llama-3.1-8B@hash:6f6073b",
             "llm://localhost:11434/llama3.2:3b?api=openai",
-            "llms+grpc://triton.internal:8001/qwen3-ft@name:step-2000",
+            "llms+grpc://triton.internal:8001/qwen3-ft@name:step-2000?api=openai",
         ];
         for example in examples {
             assert_eq!(parse(example).to_string(), example);
@@ -389,20 +457,48 @@ mod tests {
     }
 
     #[test]
-    fn identity_ignores_credential_hints_transport_and_tls() {
+    fn equivalence_ignores_credential_hints_transport_and_tls() {
         let a = parse("llms://work@API.openai.com/gpt-5?api=openai");
         let b = parse("llm+grpc://api.openai.com/gpt-5");
-        assert!(a.denotes_same_model(&b));
+        assert!(a.is_equivalent(&b));
     }
 
     #[test]
-    fn identity_uses_port_model_and_pin() {
+    fn equivalence_uses_port_model_and_pin() {
         let a = parse("llm://localhost:8000/m");
-        assert!(!a.denotes_same_model(&parse("llm://localhost:8001/m")));
-        assert!(!a.denotes_same_model(&parse("llm://localhost:8000/n")));
+        assert!(!a.is_equivalent(&parse("llm://localhost:8001/m")));
+        assert!(!a.is_equivalent(&parse("llm://localhost:8000/n")));
         let pinned = parse("llm://localhost:8000/m@hash:abc");
-        assert!(!a.denotes_same_model(&pinned));
-        assert!(!pinned.denotes_same_model(&parse("llm://localhost:8000/m@name:abc")));
+        assert!(!a.is_equivalent(&pinned));
+        assert!(!pinned.is_equivalent(&parse("llm://localhost:8000/m@name:abc")));
+    }
+
+    #[test]
+    fn equivalence_normalizes_percent_encodings() {
+        let a = parse("llms://api%2eopenai.com/gpt%2D5@hash:a%3fb");
+        let b = parse("llms://api.openai.com/gpt-5@hash:a%3Fb");
+        assert!(a.is_equivalent(&b));
+        assert_eq!(
+            a.normalized().to_string(),
+            "llms://api.openai.com/gpt-5@hash:a%3Fb"
+        );
+    }
+
+    #[test]
+    fn normalized_keeps_model_case_and_malformed_sequences() {
+        let r = parse("llms://API.OpenAI.com/GPT-5%4@name:x");
+        assert_eq!(
+            r.normalized().to_string(),
+            "llms://api.openai.com/GPT-5%4@name:x"
+        );
+    }
+
+    #[test]
+    fn the_first_occurrence_of_a_hint_key_applies() {
+        let r = parse("llm://h/m?api=openai&api=anthropic&flag");
+        assert_eq!(r.hint("api"), Some("openai"));
+        assert_eq!(r.hint("flag"), Some(""));
+        assert_eq!(r.hint("missing"), None);
     }
 
     #[test]
@@ -422,6 +518,8 @@ mod tests {
             "llm://h/",
             "llm://h/m@tag:x",
             "llm://h/m@name:",
+            "llm://h/m@name:x@y",
+            "llm://h/m@NAME:x",
             "llm://a@b@h/m",
             "llm://secret:hunter2@h/m",
             "llm://h:99999/m",
